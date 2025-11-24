@@ -1,11 +1,13 @@
 # server.py
 import socket
 import threading
+import json
 
 HOST = '127.0.0.1'   # localhost for testing
 PORT = 65432
 
 clients = {}  # socket -> nickname
+lock = threading.Lock()
 
 def broadcast(sender_sock, data: bytes):
     # forward ciphertext to all other clients (or implement targeted forwarding)
@@ -20,28 +22,54 @@ def broadcast(sender_sock, data: bytes):
 def handle_client(conn, addr):
     print(f"[+] Connected {addr}")
     try:
-        # first message: nickname (plaintext or encrypted? for simplicity, treat nickname as first message in plain)
-        nickname = conn.recv(1024).decode('utf-8', errors='ignore').strip()
-        if not nickname:
-            nickname = str(addr)
-        clients[conn] = nickname
-        print(f"Client name: {nickname}")
+        # Expect the client to first send a registration JSON bytes or nickname line
+        raw = conn.recv(4096)
+        if not raw:
+            conn.close()
+            return
+
+        # Try parse as JSON registration; otherwise treat as nickname plain text
+        try:
+            obj = json.loads(raw.decode('utf-8', errors='ignore'))
+            if isinstance(obj, dict) and obj.get("type") == "register":
+                nick = obj.get("nick", str(addr))
+                pub = obj.get("pub", None)  # should be [n, e] or similar
+                clients[conn] = {"nick": nick, "pub": pub}
+                print(f"[REGISTER] {nick} pub={pub}")
+            else:
+                # fallback
+                nick = obj.get("nick", str(addr)) if isinstance(obj, dict) else str(addr)
+                clients[conn] = {"nick": nick, "pub": None}
+                print(f"[REGISTER-other] {nick}")
+        except Exception:
+            # treat raw as nickname
+            nick = raw.decode('utf-8', errors='ignore').strip() or str(addr)
+            clients[conn] = {"nick": nick, "pub": None}
+            print(f"[REGISTER (plain)] {nick}")
+
+        # Now handle incoming messages
         while True:
-            data = conn.recv(4096)
+            data = conn.recv(8192)
             if not data:
                 break
-            # data is expected to be ciphertext bytes
-            # Log ciphertext only:
-            print(f"[Encrypted log] from {nickname}: {data.decode('utf-8', errors='ignore')}")
-            # Forward ciphertext to other clients
+
+            # If data starts with JSON and is a public-key-request or other control, you can extend.
+            # For now: server logs only encrypted payloads and forwards bytes to others.
+            text_display = data.decode('utf-8', errors='ignore')
+            print(f"[Encrypted log] from {clients.get(conn, {}).get('nick','?')}: {text_display}")
             broadcast(conn, data)
+
     except Exception as e:
         print("Client error:", e)
     finally:
         print(f"[-] Disconnected {addr}")
-        if conn in clients:
-            del clients[conn]
-        conn.close()
+        with lock:
+            if conn in clients:
+                del clients[conn]
+        try:
+            conn.close()
+        except:
+            pass
 
 def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
