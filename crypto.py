@@ -1,11 +1,26 @@
 # crypto.py
-# crypto.py
 # Simple Caesar cipher implementation, handles upper/lower letters.
 import random
 import math
 import json
 from typing import Tuple
+import json
+import bcrypt
 
+# Password hashing helpers (bcrypt)
+# ------------------------------
+def hash_password(password: str) -> str:
+    """Return bcrypt hash (utf-8 str) for a plaintext password."""
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    return hashed.decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify plaintext password against bcrypt hash (both strings)."""
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception:
+        return False
+    
 def caesar_encrypt(plaintext: str, key: int) -> str:
     result_chars = []
     for ch in plaintext:
@@ -190,11 +205,7 @@ def _score_text_by_language(text: str, language: str) -> float:
     return score
 
 def caesar_break(ciphertext: str, language: str = "english") -> dict:
-    """
-    Try all 26 shifts for Latin alphabet and return best candidate.
-    Returns a dict: {"key": best_key, "plaintext": best_plain, "candidates": [(k,plain,score), ...]}
-    For Arabic, attempts Arabic-letter shifts (basic approach).
-    """
+    
     language = language.lower()
     candidates = []
     if language == "arabic":
@@ -228,10 +239,6 @@ def caesar_break(ciphertext: str, language: str = "english") -> dict:
 
 # ------------------------------
 # Task 2: RSA implementation (manual)
-# - Miller-Rabin primality test
-# - prime generation
-# - key generation (n, e, d)
-# - string encrypt/decrypt with chunking
 # ------------------------------
 
 def _is_probable_prime(n: int, k: int = 6) -> bool:
