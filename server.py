@@ -62,7 +62,11 @@ def handle_client(conn, addr, users_db):
                 conn.close()
                 return
             hashed = hash_password(password)
-            users_db[username] = hashed
+            users_db[username] = {
+                "password_hash": hashed,
+                "face_encoding":None,
+                "consent":False
+            }
             save_users(users_db)
             conn.sendall(json.dumps({"status":"ok","msg":"Signup successful"}).encode('utf-8'))
             # After signup, expect the client to send registration JSON (nick + pub) next
@@ -89,7 +93,7 @@ def handle_client(conn, addr, users_db):
                 conn.sendall(json.dumps({"status":"error","msg":"User not found"}).encode('utf-8'))
                 conn.close()
                 return
-            stored = users_db[username]
+            stored = users_db[username]["password_hash"]
             if not verify_password(password, stored):
                 conn.sendall(json.dumps({"status":"error","msg":"Wrong password"}).encode('utf-8'))
                 conn.close()
@@ -121,31 +125,71 @@ def handle_client(conn, addr, users_db):
             data = conn.recv(8192)
             if not data:
                 break
-            text_display = data.decode('utf-8', errors='ignore')
+            incoming_json_str = data.decode('utf-8', errors='ignore')
+            
+            # Get sender info BEFORE processing
             with lock:
-                meta = clients.get(conn, {})
-                nick = meta.get("nick", "?")
-            print(f"[Encrypted log] from {nick}: {text_display}")
-            # forward raw bytes to others
-            with lock:
-                for other_conn in list(clients.keys()):
-                    if other_conn is not conn:
+                sender_meta = clients.get(conn, {})
+                sender_nick = sender_meta.get("nick", "?")
+                sender_username = sender_meta.get("username", "?")
+            
+            try:
+                # Attempt to parse the incoming data as our chat JSON
+                msg_obj = json.loads(incoming_json_str)
+                
+                # Check if it's a chat message with a receiver specified
+                if msg_obj.get("type") == "chat" and msg_obj.get("receiver"):
+                    receiver_username = msg_obj["receiver"]
+                    
+                    print(f"[Encrypted log] from {sender_nick} to {receiver_username}: {msg_obj.get('ciphertext', 'NO_CIPHERTEXT')[:50]}...")
+                    
+                    # Find the connection for the receiver
+                    receiver_conn = None
+                    with lock:
+                        for other_conn, meta in clients.items():
+                            if meta.get("username") == receiver_username:
+                                receiver_conn = other_conn
+                                break
+                    
+                    # Route the message
+                    if receiver_conn:
                         try:
-                            other_conn.sendall(data)
-                        except Exception:
+                            # Send the *original raw JSON* containing sender/receiver/ciphertext
+                            receiver_conn.sendall(data) 
+                            print(f"[ROUTED] from {sender_nick} to {receiver_username}")
+                        except Exception as e:
+                            print(f"[ERROR] Could not send to {receiver_username}: {e}. Closing connection.")
+                            # Clean up
+                            with lock:
+                                if receiver_conn in clients:
+                                    del clients[receiver_conn]
                             try:
-                                other_conn.close()
+                                receiver_conn.close()
                             except:
                                 pass
-                            if other_conn in clients:
-                                del clients[other_conn]
+                    else:
+                        print(f"[WARN] Receiver {receiver_username} not found or not connected.")
+                        # (Optional: send a 'user not found' response back to the sender)
+                else:
+                    # Log raw data if it doesn't match the new chat format
+                    print(f"[Encrypted log] from {sender_nick} (UNKNOWN FORMAT): {incoming_json_str}")
+
+            except json.JSONDecodeError:
+                # Fallback for non-JSON/legacy/raw data
+                print(f"[Encrypted log] from {sender_nick} (RAW DATA): {incoming_json_str}")
+                # For now, discard raw data if not a JSON chat message, 
+                # as the new protocol requires a receiver.
+                pass
+            except Exception as e:
+                print(f"[Server Error processing message from {sender_nick}]: {e}")
 
     except Exception as e:
-        print("Client error:", e)
+        print(f"[Client Handler Error]: {e}")
     finally:
-        print(f"[-] Disconnected {addr}")
         with lock:
             if conn in clients:
+                username = clients[conn].get("username", "unknown")
+                print(f"[-] Disconnected {username}")
                 del clients[conn]
         try:
             conn.close()

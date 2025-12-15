@@ -6,6 +6,15 @@ import json
 from typing import Tuple
 import json
 import bcrypt
+import face_recognition
+import numpy as np
+
+# RSA keys (example small keys, use larger in production)
+PUB_N = 2357      # public modulus
+PUB_E = 13        # public exponent
+PRIV_N = 2357     # private modulus (same as PUB_N)
+PRIV_D = 937      # private exponent
+
 
 # Password hashing helpers (bcrypt)
 # ------------------------------
@@ -374,6 +383,36 @@ def rsa_decrypt_string(ciphertext_json: str, priv_n: int, priv_d: int) -> str:
     b = rsa_decrypt_bytes(cipher_blocks, priv_n, priv_d)
     return b.decode('utf-8', errors='ignore')
 
+
+
+# ------------------------------
+# Facial recognition helpers
+# ------------------------------
+
+
+
+def extract_face_encoding_from_image(image):
+    """
+    Takes an image (numpy array) and returns a face encoding.
+    Returns None if no face is detected.
+    """
+    encodings = face_recognition.face_encodings(image)
+    if len(encodings) == 0:
+        return None
+    return encodings[0]
+
+def verify_face_encoding(stored_encoding, live_encoding, tolerance=0.5):
+    """
+    Compare stored face encoding with a live one.
+    Returns True if match.
+    """
+    stored = np.array(stored_encoding)
+    result = face_recognition.compare_faces(
+        [stored],
+        live_encoding,
+        tolerance=tolerance
+    )
+    return result[0]
 
 # quick test
 if __name__ == "__main__":
